@@ -1,45 +1,58 @@
-# Claw — Goodreads Data Scraper
+# Crawl — Goodreads Data Scraper
 
-Script cào thêm data từ Goodreads Listopia để cân bằng dataset cho model phân loại sách.
+Script cào dữ liệu từ Goodreads Listopia để cân bằng dataset cho model phân loại sách.
 
-## Cài đặt
+---
+
+## 1. Chuẩn bị dữ liệu ban đầu
+
+Tải file data gốc tại đây: [Link Google Drive](https://drive.google.com/file/d/1T2jEGioE9M4TSj8CSrPTwqUP5pCQr99p/view?usp=sharing)
+
+Sau khi tải về, đặt file vào **cùng thư mục** với `claw.py`.
+
+---
+
+## 2. Cài đặt môi trường
 
 ```bash
 pip install playwright pandas langdetect
 python -m playwright install chromium
 ```
 
-## Cách dùng
+---
 
-Mở `claw.py`, sửa 2 dòng theo phân công:
+## 3. Cách dùng
+
+Mở `claw.py`, sửa dòng theo phân công của mình:
 
 ```python
-# Thể loại được phân công
-priority_order = ["essay"]   # essay | anthology | technology | sports | western | self_help
-
-# Nếu có file JSON gốc thì điền đường dẫn, không có thì để ""
-EXISTING_JSON_PATH = ""
+# Thể loại được phân công (chọn một trong các giá trị bên dưới)
+priority_order = []   # essay | anthology | technology | sports | western | self_help
 ```
 
-Rồi chạy:
+Sau đó chạy:
 
 ```bash
 python claw.py
 ```
 
-Kết quả lưu vào `balanced_dataset_additions.csv`. Gửi file này lên nhóm sau khi chạy xong.
+Kết quả sẽ được lưu vào file `balanced_dataset_additions.csv`. Gửi file này lên nhóm sau khi chạy xong.
 
-## Phân công
+---
 
-| Thành viên | Thể loại | Cần cào |
-|---|---|---|
-| Người 1 | essay | ~20,000 |
-| Người 2 | anthology | ~15,000 |
-| Người 3 | technology | ~10,000 |
-| Người 4 | sports | ~10,000 |
-| Người 5 | western + self_help | ~8,000 + 5,500 |
+## 4. Phân công
 
-## Lưu ý
+| Thành viên | Thể loại          |
+|------------|-------------------|
+| Dũng       | anthology         |
+| Chức       | technology        |
+| Tú         | sports            |
+| Quý        | western, self_help |
 
-- Không đóng cửa sổ trình duyệt khi script đang chạy
-- Không commit file CSV hoặc JSON lên repo
+---
+
+## 5. Lưu ý
+
+- **Không đóng** cửa sổ trình duyệt khi script đang chạy.
+- Thời gian chạy có thể kéo dài — để máy ở trạng thái hoạt động, không cho ngủ.
+- Nếu script bị lỗi giữa chừng, chạy lại từ đầu — dữ liệu đã cào sẽ được ghi tiếp vào file cũ, không bị mất.
