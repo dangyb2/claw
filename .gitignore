@@ -1,0 +1,8 @@
+# .gitignore
+*.json
+*.csv
+*.pkl
+*.pt
+__pycache__/
+.venv/
+*.pyc
