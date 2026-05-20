@@ -53,6 +53,7 @@ Kết quả sẽ được lưu vào file `balanced_dataset_additions.csv`. Gửi
 
 ## 5. Lưu ý
 
-- **Không đóng** cửa sổ trình duyệt khi script đang chạy.
-- Thời gian chạy có thể kéo dài — để máy ở trạng thái hoạt động, không cho ngủ.
-- Nếu script bị lỗi giữa chừng, chạy lại từ đầu — dữ liệu đã cào sẽ được ghi tiếp vào file cũ, không bị mất.
+- **Trình duyệt ẩn (Headless):** Ở Giai đoạn 1 & 2, trình duyệt sẽ hiện lên (không được đóng!). Nhưng sang Giai đoạn 3, kịch bản sẽ mở 4 luồng chạy ngầm (không hiện trình duyệt) để tăng tốc độ. Các bạn chỉ cần theo dõi tiến độ trên Terminal/Console.
+- **Lưu dữ liệu:** Dữ liệu chỉ được lưu vào file CSV **SAU KHI** cào xong toàn bộ 1 thể loại. Nếu bị crash hoặc mất điện giữa chừng khi đang chạy Phase 3, các bạn sẽ phải chạy lại thể loại đó từ đầu.
+- Thời gian chạy có thể kéo dài từ 2-3 tiếng mỗi thể loại — hãy cắm sạc và tắt chế độ Sleep/Ngủ của máy tính.
+Once you make those minor adjustments, push it to GitHub and let your team loose on it!

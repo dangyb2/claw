@@ -284,7 +284,7 @@ if __name__ == "__main__":
 
     all_new_books = []
 
-    priority_order = ["essay"]
+    priority_order = []
 
     for genre_label in priority_order:
         tags = TAG_MAP[genre_label]
