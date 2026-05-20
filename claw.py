@@ -125,20 +125,39 @@ def get_book_urls_from_list(page, list_url, existing_titles, max_pages=MAX_LIST_
 # ============================================================
 
 def fetch_book_details(page, book_url):
-    """Navigate to a book page and extract description and genres."""
     details = {"description": None, "genres": None}
     try:
         page.goto(book_url, wait_until="domcontentloaded", timeout=45000)
         page.wait_for_timeout(2000)
 
-        if page.locator('meta[property="og:description"]').count() > 0:
-            details["description"] = page.locator('meta[property="og:description"]').first.get_attribute(
-                "content").strip()
-        elif page.locator('meta[name="description"]').count() > 0:
-            details["description"] = page.locator('meta[name="description"]').first.get_attribute("content").strip()
-        elif page.locator('div[data-testid="description"]').count() > 0:
-            details["description"] = page.locator('div[data-testid="description"]').first.inner_text().strip()
+        # --- DESCRIPTION ---
+        # Click "...more" button if present to expand full text
+        try:
+            more_btn = page.locator(
+                'div[data-testid="description"] button[aria-label*="more"], '
+                'div[data-testid="description"] .Button--inline'
+            )
+            if more_btn.count() > 0:
+                more_btn.first.click()
+                page.wait_for_timeout(500)
+        except Exception:
+            pass
 
+        # Prefer full .Formatted span, fall back to meta tag
+        if page.locator('div[data-testid="description"] .Formatted').count() > 0:
+            details["description"] = (
+                page.locator('div[data-testid="description"] .Formatted')
+                .first.inner_text()
+                .strip()
+            )
+        elif page.locator('meta[property="og:description"]').count() > 0:
+            details["description"] = (
+                page.locator('meta[property="og:description"]')
+                .first.get_attribute("content")
+                .strip()
+            )
+
+        # --- GENRES ---
         genre_links = page.locator('[data-testid="genresList"] a[href*="/genres/"]')
         if genre_links.count() == 0:
             genre_links = page.locator('.BookPageMetadataSection__genres a[href*="/genres/"]')
@@ -157,7 +176,6 @@ def fetch_book_details(page, book_url):
         print(f"    [SKIPPED] Timeout or error on: {book_url}")
 
     return details
-
 
 def fetch_worker(books_slice, worker_id, genre_label):
     """Each worker gets its own headless browser + page to scrape details."""
@@ -227,7 +245,7 @@ def scrape_genre(genre_label, tags, existing_titles, cap):
     # ── Phase 3: Fetch Details (MULTITHREADED) ──────────────────
     print(f"\n--- PHASE 3: Fetching details for {len(urls_to_scrape):,} books using 4 workers ---")
 
-    NUM_WORKERS = 4
+    NUM_WORKERS = 5
     # Split the URLs array into 4 equal slices
     chunks = [urls_to_scrape[i::NUM_WORKERS] for i in range(NUM_WORKERS)]
     all_books_data = []
