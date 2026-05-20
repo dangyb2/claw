@@ -1,7 +1,8 @@
 import time
 import random
-import pandas as pd
 import json
+import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 # ============================================================
@@ -11,29 +12,26 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 EXISTING_JSON_PATH = "goodreads_books_cleaned_english.json"
 OUTPUT_CSV = "balanced_dataset_additions.csv"
 
-# Only the genres that actually need more data (based on F1 scores + dataset counts).
-# Genres with plenty of data (romance, fiction, thriller, etc.) are excluded.
 TAG_MAP = {
-    "essay":      ["essays", "creative-nonfiction", "essay-collection"],
-    "anthology":  ["anthologies", "short-stories", "anthology"],
+    "essay": ["essays", "creative-nonfiction", "essay-collection"],
+    "anthology": ["anthologies", "short-stories", "anthology"],
     "technology": ["technology", "computers", "artificial-intelligence"],
-    "sports":     ["sports", "baseball", "basketball", "football", "soccer"],
-    "western":    ["westerns", "western", "frontier"],
-    "self_help":  ["self-help", "personal-development", "productivity"],
+    "sports": ["sports", "baseball", "basketball", "football", "soccer"],
+    "western": ["westerns", "western", "frontier"],
+    "self_help": ["self-help", "personal-development", "productivity"],
 }
 
-# How many NEW books to gather per genre before stopping.
 GENRE_CAPS = {
-    "essay":      20000,
-    "anthology":   15000,
-    "technology":  10000,
-    "sports":      10000,
-    "western":     8000,
-    "self_help":   5500,
+    "essay": 20000,
+    "anthology": 15000,
+    "technology": 10000,
+    "sports": 10000,
+    "western": 8000,
+    "self_help": 5500,
 }
 
-MAX_TAG_PAGES  = 5   # pages of list results per tag  (~30 lists/page)
-MAX_LIST_PAGES = 5   # pages deep per individual list (~100 books/page)
+MAX_TAG_PAGES = 5  # pages of list results per tag  (~30 lists/page)
+MAX_LIST_PAGES = 5  # pages deep per individual list (~100 books/page)
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -41,14 +39,14 @@ USER_AGENT = (
     "Chrome/120.0.0.0 Safari/537.36"
 )
 
+
 # ============================================================
-# PHASE 1: Get list URLs from a Listopia tag page
+# PHASE 1 & 2: URL GATHERING
 # ============================================================
 
 def get_list_urls_for_tag(page, tag, max_pages=MAX_TAG_PAGES):
     """Collect Listopia list URLs for a given tag."""
     list_urls = []
-
     for p in range(1, max_pages + 1):
         url = f"https://www.goodreads.com/list/tag/{tag}?page={p}"
         print(f"  [Tag '{tag}' page {p}] {url}")
@@ -80,17 +78,11 @@ def get_list_urls_for_tag(page, tag, max_pages=MAX_TAG_PAGES):
     return list_urls
 
 
-# ============================================================
-# PHASE 2: Get book URLs from a single Listopia list
-# ============================================================
-
 def get_book_urls_from_list(page, list_url, existing_titles, max_pages=MAX_LIST_PAGES):
     """Collect new book URLs from a Listopia list (handles pagination)."""
     book_entries = []
-
     for p in range(1, max_pages + 1):
         url = f"{list_url}?page={p}"
-
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=45000)
             page.wait_for_selector('tr[itemtype="http://schema.org/Book"]', timeout=10000)
@@ -102,7 +94,7 @@ def get_book_urls_from_list(page, list_url, existing_titles, max_pages=MAX_LIST_
 
         for row in rows:
             title_el = row.locator("a.bookTitle span")
-            link_el  = row.locator("a.bookTitle")
+            link_el = row.locator("a.bookTitle")
 
             if title_el.count() == 0 or link_el.count() == 0:
                 continue
@@ -121,48 +113,32 @@ def get_book_urls_from_list(page, list_url, existing_titles, max_pages=MAX_LIST_
             new_count += 1
 
         print(f"    [List page {p}] {new_count} new books")
-
         if new_count == 0:
             break
-
         time.sleep(random.uniform(1, 2.5))
 
     return book_entries
 
 
 # ============================================================
-# PHASE 3: Fetch description + genres for each book
+# PHASE 3: FETCHING WORKERS
 # ============================================================
 
 def fetch_book_details(page, book_url):
     """Navigate to a book page and extract description and genres."""
     details = {"description": None, "genres": None}
-
     try:
         page.goto(book_url, wait_until="domcontentloaded", timeout=45000)
         page.wait_for_timeout(2000)
 
-        # --- DESCRIPTION ---
         if page.locator('meta[property="og:description"]').count() > 0:
-            details["description"] = (
-                page.locator('meta[property="og:description"]')
-                .first.get_attribute("content")
-                .strip()
-            )
+            details["description"] = page.locator('meta[property="og:description"]').first.get_attribute(
+                "content").strip()
         elif page.locator('meta[name="description"]').count() > 0:
-            details["description"] = (
-                page.locator('meta[name="description"]')
-                .first.get_attribute("content")
-                .strip()
-            )
+            details["description"] = page.locator('meta[name="description"]').first.get_attribute("content").strip()
         elif page.locator('div[data-testid="description"]').count() > 0:
-            details["description"] = (
-                page.locator('div[data-testid="description"]')
-                .first.inner_text()
-                .strip()
-            )
+            details["description"] = page.locator('div[data-testid="description"]').first.inner_text().strip()
 
-        # --- GENRES ---
         genre_links = page.locator('[data-testid="genresList"] a[href*="/genres/"]')
         if genre_links.count() == 0:
             genre_links = page.locator('.BookPageMetadataSection__genres a[href*="/genres/"]')
@@ -183,35 +159,55 @@ def fetch_book_details(page, book_url):
     return details
 
 
+def fetch_worker(books_slice, worker_id, genre_label):
+    """Each worker gets its own headless browser + page to scrape details."""
+    results = []
+    with sync_playwright() as p:
+        # Headless=True is good here so 4 browser windows don't pop up on your screen
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(user_agent=USER_AGENT)
+        page = context.new_page()
+
+        for idx, book in enumerate(books_slice, 1):
+            print(f"  [Worker {worker_id}] [{idx}/{len(books_slice)}] {book['title']}")
+            details = fetch_book_details(page, book["url"])
+
+            if details["description"]:
+                results.append({
+                    "title": book["title"],
+                    "description": details["description"],
+                    "genre": details["genres"] if details["genres"] else genre_label,
+                })
+            time.sleep(random.uniform(1, 3))
+
+        context.close()
+        browser.close()
+    return results
+
+
 # ============================================================
-# MAIN SCRAPER
+# MAIN ORCHESTRATOR
 # ============================================================
 
 def scrape_genre(genre_label, tags, existing_titles, cap):
     """Run all 3 phases for one genre label across multiple tags."""
-    all_books_data = []
-
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
 
-        # ── Phase 1 + 2: collect book URLs ──────────────────
+        # ── Phase 1 + 2: Collect book URLs ──────────────────
         gather_context = browser.new_context(user_agent=USER_AGENT)
-        gather_page    = gather_context.new_page()
-
+        gather_page = gather_context.new_page()
         urls_to_scrape = []
 
         for tag in tags:
             if len(urls_to_scrape) >= cap:
-                print(f"  ✅ Cap of {cap:,} reached. Skipping remaining tags.")
                 break
 
             print(f"\n  ▸ Collecting lists for tag: '{tag}'")
             list_urls = get_list_urls_for_tag(gather_page, tag)
-            print(f"  ▸ Found {len(list_urls)} lists for tag '{tag}'")
 
             for i, list_url in enumerate(list_urls, 1):
                 if len(urls_to_scrape) >= cap:
-                    print(f"  ✅ Cap of {cap:,} reached. Skipping remaining lists.")
                     break
 
                 print(f"  ▸ List {i}/{len(list_urls)}: {list_url}")
@@ -221,34 +217,27 @@ def scrape_genre(genre_label, tags, existing_titles, cap):
                 time.sleep(random.uniform(2, 4))
 
         gather_context.close()
-
-        # Trim to exact cap in case the last list pushed us over
-        urls_to_scrape = urls_to_scrape[:cap]
-        print(f"\n--- PHASE 3: Fetching details for {len(urls_to_scrape):,} books ---")
-
-        # ── Phase 3: fetch details ───────────────────────────
-        fetch_context = browser.new_context(user_agent=USER_AGENT)
-        fetch_page    = fetch_context.new_page()
-
-        for idx, book in enumerate(urls_to_scrape, 1):
-            print(f" [{idx}/{len(urls_to_scrape)}] {book['title']}")
-            details = fetch_book_details(fetch_page, book["url"])
-
-            if details["description"]:
-                genre_value = details["genres"] if details["genres"] else genre_label
-                print(f"    [SUCCESS] {genre_value[:60]}...")
-                all_books_data.append({
-                    "title":       book["title"],
-                    "description": details["description"],
-                    "genre":       genre_value,
-                })
-            else:
-                print(f"    [FAILED] No description.")
-
-            time.sleep(random.uniform(1, 3))
-
-        fetch_context.close()
         browser.close()
+
+    # Trim to exact cap
+    urls_to_scrape = urls_to_scrape[:cap]
+    if not urls_to_scrape:
+        return []
+
+    # ── Phase 3: Fetch Details (MULTITHREADED) ──────────────────
+    print(f"\n--- PHASE 3: Fetching details for {len(urls_to_scrape):,} books using 4 workers ---")
+
+    NUM_WORKERS = 4
+    # Split the URLs array into 4 equal slices
+    chunks = [urls_to_scrape[i::NUM_WORKERS] for i in range(NUM_WORKERS)]
+    all_books_data = []
+
+    with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
+        # Submit slices to workers and pass the genre_label
+        futures = {executor.submit(fetch_worker, chunk, i + 1, genre_label): i for i, chunk in enumerate(chunks)}
+
+        for future in as_completed(futures):
+            all_books_data.extend(future.result())
 
     return all_books_data
 
@@ -277,16 +266,15 @@ if __name__ == "__main__":
 
     all_new_books = []
 
-    # Sort by most urgent first (lowest F1 / smallest dataset)
-    priority_order = []
+    priority_order = ["essay"]
 
     for genre_label in priority_order:
         tags = TAG_MAP[genre_label]
-        cap  = GENRE_CAPS[genre_label]
+        cap = GENRE_CAPS[genre_label]
 
-        print(f"\n{'='*55}")
+        print(f"\n{'=' * 55}")
         print(f"▶ GENRE: {genre_label.upper()}  |  Cap: {cap:,}  |  Tags: {tags}")
-        print(f"{'='*55}")
+        print(f"{'=' * 55}")
 
         results = scrape_genre(genre_label, tags, existing_titles, cap)
 
