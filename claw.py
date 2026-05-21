@@ -177,14 +177,16 @@ def fetch_book_details(page, book_url):
 
     return details
 
+
 def fetch_worker(books_slice, worker_id, genre_label):
     """Each worker gets its own headless browser + page to scrape details."""
     results = []
     with sync_playwright() as p:
-        # Headless=True is good here so 4 browser windows don't pop up on your screen
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(user_agent=USER_AGENT)
         page = context.new_page()
+
+        consecutive_fails = 0
 
         for idx, book in enumerate(books_slice, 1):
             print(f"  [Worker {worker_id}] [{idx}/{len(books_slice)}] {book['title']}")
@@ -196,13 +198,31 @@ def fetch_worker(books_slice, worker_id, genre_label):
                     "description": details["description"],
                     "genre": details["genres"] if details["genres"] else genre_label,
                 })
+                # Reset the fail counter on a successful scrape
+                consecutive_fails = 0
+            else:
+                consecutive_fails += 1
+
+                if consecutive_fails >= 5:
+                    print(f"  [!] Worker {worker_id} cascade failure detected. Rebooting browser session...")
+                    try:
+                        context.close()
+                        browser.close()
+                    except:
+                        pass
+
+                    time.sleep(random.uniform(30, 60))  # ← cool-down is essential
+
+                    browser = p.chromium.launch(headless=True)
+                    context = browser.new_context(user_agent=USER_AGENT)
+                    page = context.new_page()
+                    consecutive_fails = 0
+
             time.sleep(random.uniform(1, 3))
 
         context.close()
         browser.close()
     return results
-
-
 # ============================================================
 # MAIN ORCHESTRATOR
 # ============================================================
@@ -245,7 +265,7 @@ def scrape_genre(genre_label, tags, existing_titles, cap):
     # ── Phase 3: Fetch Details (MULTITHREADED) ──────────────────
     print(f"\n--- PHASE 3: Fetching details for {len(urls_to_scrape):,} books using 4 workers ---")
 
-    NUM_WORKERS = 5
+    NUM_WORKERS = 4
     # Split the URLs array into 4 equal slices
     chunks = [urls_to_scrape[i::NUM_WORKERS] for i in range(NUM_WORKERS)]
     all_books_data = []
